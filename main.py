@@ -28,7 +28,7 @@ import psycopg2 as pg
 # Constants and defaults
 # ======================
 imagesDirName = 'images'
-dotChar = '.'
+extChar = '.'
 seperatorChar = '_'
 # ===================================================
 # DB defaults you will probably have to change these
@@ -37,6 +37,12 @@ table = 'parcels'
 schema = 'gist_7132_m07'
 host = 'gamma.athena.bcit.ca'
 port = 5432
+# ========================================
+# Template SQL for the update; the first
+# %s will be swapped for a big-chunk of bytes
+# the second %s will be the parcel_id
+# ========================================
+sqlWithParameters = f'UPDATE {schema}.{table} SET map = %s WHERE parcels_id = %s'
 # ================================
 # Get the user name and password
 # ================================
@@ -51,40 +57,42 @@ password = gp.getpass('Input your password: ')
 # ==========================================
 connString = f'host={host} dbname={dbname} user={userName} password={password}'
 
-parcel_id = None
-
+parcelId = None
 try:
     with pg.connect(connString) as conn:
         # =================================
         # Use a cursor to do an update SOP
+        # Note: we a recycling the cursor
         # =================================
         with conn.cursor() as cur:
             # ==========================================================================
             # For every file in the image directory update the blob field in the table
             # ==========================================================================
-            for file in o.listdir(imagesDirName):
+            for blobFile in o.listdir(imagesDirName):
+                print(f'Processing image {blobFile}')
                 # ========================================
                 # Slice the parcel id from the file name
-                # Nasty but it works
+                # Nasty but it works (notice the +1)
+                # pattern lot_N.jpg, lot_NN.jpg, lot_NNN.jpg
                 # ========================================
-                parcel_id = file[file.index(seperatorChar)+1:file.index(dotChar)]
+                parcelId = blobFile[blobFile.index(seperatorChar)+1:blobFile.index(extChar)]
                 # ========================================
-                # Template SQL for the update
-                # %s will be swapped for a big-chunk of bytes
+                # Open the file in binary mode. Read the 
+                # entire file into a pg binary object
                 # ========================================
-                sql = f'UPDATE {schema}.{table} SET map = %s WHERE parcels_id = {parcel_id}'
-                print(sql)
+                pgBlob = None
+                with open(o.path.join(imagesDirName, blobFile), 'rb') as blobFile:
+                    pgBlob = pg.Binary(blobFile.read())
                 # ========================================
-                # Open the file in binary mode
+                # Set up a list with the all parameters:
+                # blob and id
+                # Use the cursor to execute SQL
+                # Send in the list params to be swapped
                 # ========================================
-                with open(o.path.join(imagesDirName, file), 'rb') as blobFile:
-                    # ========================================
-                    # execute the SQL but swap in the file for %s
-                    # could have several values to swap so
-                    # the default is a list or tuple to swap in
-                    # Convert the python binary stream to a pg blob
-                    # ========================================
-                    cur.execute(sql, [pg.Binary(blobFile.read())])
+                parameters = [pgBlob, parcelId]
+                cur.execute(sqlWithParameters, parameters)
+                del(pgBlob)
+                del(parameters)
 except Exception as e1:
     tb.print_exc()
 
